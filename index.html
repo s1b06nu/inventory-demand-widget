@@ -1,35 +1,366 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Inventory vs Demand</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root {
-      --bg:#fff; --fg:#111; --muted:#667085;
-      --border:#e5e7eb; --good:#14866d; --warn:#b76e00; --bad:#a61c2a; --sticky:#f8fafc;
-    }
-    * { box-sizing: border-box; }
-    body { margin:0; font:14px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial; color:var(--fg); background:var(--bg); }
+<meta charset="utf-8" />
+<title>Inventory vs Demand – Multi‑Export Widget</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    .wrap { padding:12px; max-width:100vw; }
-    .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
-    .toolbar input[type="search"]{ padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:280px; }
-    .toolbar .meta{ color:var(--muted); font-size:12px; }
+<!-- Styles -->
+<style>
+  :root{ --bg:#fff; --fg:#111; --muted:#667085; --border:#e5e7eb; --good:#14866d; --warn:#b76e00; --bad:#a61c2a; --sticky:#f8fafc }
+  *{ box-sizing:border-box }
+  body{ margin:0; font:14px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial; color:var(--fg); background:var(--bg) }
+  .wrap{ padding:12px; max-width:1200px; margin:0 auto }
+  h2{ margin:8px 0 4px }
+  .meta{ color:var(--muted); font-size:12px }
+  .drop{ border:2px dashed var(--border); border-radius:10px; padding:16px; text-align:center; background:#fafafa; margin-top:8px }
+  .drop.hover{ background:#f0f8ff; border-color:#60a5fa }
+  .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0 }
+  .controls{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin:10px 0 14px }
+  input[type="search"], select, input[type="date"]{ padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:#fff }
+  input[type="search"]{ width:280px }
+  button{ padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer }
+  .pill{ padding:2px 6px; border-radius:999px; border:1px solid var(--border); background:#fff; font-size:12px; color:#475569 }
+  .grid{ overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:#fff }
+  table{ width:100%; border-collapse:collapse }
+  thead th{ position:sticky; top:0; background:var(--sticky); border-bottom:1px solid var(--border); padding:8px; text-align:left; font-weight:600 }
+  tbody td{ border-bottom:1px solid var(--border); padding:6px 8px; white-space:nowrap; text-overflow:ellipsis; overflow:hidden }
+  tbody tr:nth-child(even){ background:#fcfcfc }
+  .num{ font-feature-settings:"tnum" 1, "lnum" 1; text-align:right }
+  .good{ color:var(--good); font-weight:600 }
+  .warn{ color:var(--warn); font-weight:600 }
+  .bad{  color:var(--bad);  font-weight:600 }
+  .hidden{ display:none }
+  canvas{ max-height:320px }
+  .legend{ display:flex; gap:6px; align-items:center; font-size:12px; color:#334155 }
+  .legend span{ display:inline-block; width:10px; height:10px; border-radius:2px; }
+</style>
 
-    .shell{ overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px; }
-  </style>
+<!-- Client-side libs from CDNs -->
+https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js</script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1n.js</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/distn.js</script>
 </head>
 <body>
-  <div class="wrap">
-    <div class="toolbar">
-      <input type="search" placeholder="Search…"/>
-      <span class="meta">Inventory vs Demand</span>
+<div class="wrap">
+  <h2>Inventory vs Demand – Upload multiple exports</h2>
+  <div class="meta">
+    Drop all exports here (CSV/XLSX). We’ll detect <em>Atlas Release</em>, <em>Load Unit Table</em>, <em>Order Lines</em>, <em>GLS</em>, and <em>Rates</em> automatically. Nothing is uploaded to a server.
+  </div>
+
+  <div id="drop" class="drop" tabindex="0" aria-label="Drop zone">
+    <input id="files" type="file" multiple accept=".xlsx,.xls,.csv" style="display:none" />
+    <p><strong>Drag & drop</strong> your files here, or <button id="btnChoose" type="button">Choose files…</button></p>
+    <div class="meta">You can add more later; we’ll merge them by type.</div>
+  </div>
+
+  <div class="toolbar hidden" id="toolbar">
+    <input id="q" type="search" placeholder="Search..." />
+    <span class="pill" id="fileCount">0 files</span>
+    <span class="pill" id="rowCount">0 rows</span>
+    <span class="pill" id="colCount">0 columns</span>
+    <span class="meta" id="detected"></span>
+  </div>
+
+  <div class="controls hidden" id="controls">
+    <div>
+      <label style="display:block;font-size:12px;color:#334155">Release date from</label>
+      <input type="date" id="fromDate" />
     </div>
-    <div class="shell">
-      <!-- Your content goes here -->
-      <p>Hello, world.</p>
+    <div>
+      <label style="display:block;font-size:12px;color:#334155">to</label>
+      <input type="date" id="toDate" />
+    </div>
+    <div>
+      <label style="display:block;font-size:12px;color:#334155">Include Status</label>
+      <select id="status" multiple size="4" style="min-width:140px">
+        <option value="NEW" selected>NEW</option>
+        <option value="RELEASED" selected>RELEASED</option>
+        <option value="PICKED">PICKED</option>
+        <option value="SHIPPED">SHIPPED</option>
+      </select>
+    </div>
+    <div>
+      <label style="display:block;font-size:12px;color:#334155">Destination (optional)</label>
+      <input type="search" id="dest" placeholder="e.g., SAMS or 2229" />
+    </div>
+    <div>
+      <label style="display:block;font-size:12px;color:#334155">Chart X</label>
+      <select id="xCol">
+        <option value="Item Description">Item Description</option>
+        <option value="SKU">SKU</option>
+      </select>
+    </div>
+    <div>
+      <label style="display:block;font-size:12px;color:#334155">Chart Y</label>
+      <select id="yCol">
+        <option value="Demand">Demand</option>
+        <option value="Inventory">Inventory</option>
+        <option value="Net">Net</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:6px; align-items:flex-end">
+      <button id="btnApply">Apply filters</button>
+      <button id="btnChart">Update chart</button>
+      <button id="btnClear">Reset</button>
+    </div>
+    <div class="legend">
+      <span style="background:#d1fae5;border:1px solid #10b981"></span> Good (Net ≥ 0)
+      <span style="background:#fff7ed;border:1px solid #f59e0b"></span> Warning (Net between thresholds)
+      <span style="background:#fee2e2;border:1px solid #ef4444"></span> Bad (Net &lt; threshold)
     </div>
   </div>
+
+  <div class="grid hidden" id="gridWrap">
+    <table id="grid">
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="hidden" id="chartWrap">
+    <canvas id="chart"></canvas>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ======= Elements =======
+  const el = (id)=>document.getElementById(id);
+  const drop = el('drop'), input = el('files'), btnChoose = el('btnChoose');
+  const toolbar = el('toolbar'), controls = el('controls'), gridWrap = el('gridWrap');
+  const q = el('q'), fileCount = el('fileCount'), rowCount = el('rowCount'), colCount = el('colCount'), detected = el('detected');
+  const fromDate = el('fromDate'), toDate = el('toDate'), statusSel = el('status'), dest = el('dest');
+  const thead = el('thead'), tbody = el('tbody');
+  const xColSel = el('xCol'), yColSel = el('yCol');
+  const btnApply = el('btnApply'), btnChart = el('btnChart'), btnClear = el('btnClear');
+  let chart;
+
+  // ======= Data buckets =======
+  let atlasRows = [];       // Atlas Release rows
+  let wm6InvRows = [];      // Load Unit Table rows
+  let ratesRows = [];       // Rates (optional)
+  let mergedRows = [];      // Final aggregation
+  let filesSeen = new Set();
+
+  // ======= Helpers =======
+  const fmt = (n)=> n==null || n==='' ? '' : Number(n).toLocaleString();
+  const parseDate = (v)=> {
+    if (!v && v!==0) return null;
+    // XLSX may give numbers (Excel date serial), strings, or Date
+    if (v instanceof Date) return v;
+    if (typeof v === 'number') { // Excel serial -> JS Date
+      const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    }
+    const s = String(v).trim();
+    const t = Date.parse(s);
+    return isNaN(t) ? null : new Date(t);
+  };
+  const unique = (arr)=> Array.from(new Set(arr));
+  const selectedStatuses = ()=> Array.from(statusSel.selectedOptions).map(o=>o.value);
+
+  const isAtlas = (cols)=> ['Item #','Order Quantity (WHPK)','Effective Release Date'].every(c=> cols.includes(c));
+  const isWM6   = (cols)=> ['Product','Product Description','Quantity Available'].every(c=> cols.includes(c));
+  const isRates = (cols)=> ['SKU','Curent'].every(c=> cols.includes(c));
+
+  function detectAndStore(sheetName, rows, cols){
+    if (!rows || !rows.length) return;
+    if (isAtlas(cols)) {
+      atlasRows.push(...rows);
+    } else if (isWM6(cols)) {
+      wm6InvRows.push(...rows);
+    } else if (isRates(cols)) {
+      ratesRows.push(...rows);
+    } else {
+      // Ignored: GLS, Order Lines, other reference data (available for future rules)
+    }
+  }
+
+  function parseCSV(text){
+    const out = Papa.parse(text, { header:true, skipEmptyLines:true });
+    const rows = out.data;
+    const cols = out.meta.fields || unique(rows.flatMap(r=>Object.keys(r)));
+    detectAndStore('csv', rows, cols);
+  }
+
+  async function parseXLSX(arrayBuffer){
+    const wb = XLSX.read(arrayBuffer, { type:'array' });
+    for (const sheetName of wb.SheetNames){
+      const ws = wb.Sheets[sheetName];
+      if (!ws) continue;
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      if (!rows || !rows.length) continue;
+      // Find header row: first row w/ at least 2 non-empty cells
+      const headerRowIdx = rows.findIndex(r => r.filter(v => String(v).trim() !== '').length >= 2);
+      const headers = headerRowIdx >= 0 ? rows[headerRowIdx].map(h => String(h).trim()) : rows[0].map(h=>String(h).trim());
+      const body = rows.slice((headerRowIdx>=0?headerRowIdx:0)+1).filter(r => r.some(v => String(v).trim() !== ''));
+      const aoo = body.map(r => Object.fromEntries(headers.map((h,i)=>[h, r[i]])));
+      detectAndStore(sheetName, aoo, headers);
+    }
+  }
+
+  async function handleFiles(fileList){
+    for (const f of fileList){
+      if (filesSeen.has(f.name+':'+f.size)) continue; // simple dedupe
+      filesSeen.add(f.name+':'+f.size);
+      const name = f.name.toLowerCase();
+      if (name.endsWith('.csv')){
+        parseCSV(await f.text());
+      } else {
+        await parseXLSX(await f.arrayBuffer());
+      }
+    }
+    summarizeDetection();
+    recompute();
+  }
+
+  function summarizeDetection(){
+    const parts = [];
+    if (atlasRows.length) parts.push(`Atlas: ${atlasRows.length.toLocaleString()} rows`);
+    if (wm6InvRows.length) parts.push(`WM6 Inventory: ${wm6InvRows.length.toLocaleString()} rows`);
+    if (ratesRows.length) parts.push(`Rates: ${ratesRows.length.toLocaleString()} rows`);
+    detected.textContent = parts.join(' • ') || 'No recognized data yet';
+    fileCount.textContent = `${filesSeen.size} file${filesSeen.size===1?'':'s'}`;
+    toolbar.classList.remove('hidden'); controls.classList.remove('hidden'); gridWrap.classList.remove('hidden');
+  }
+
+  function recompute(){
+    // ---- Build Inventory by SKU from WM6 ----
+    const invBySku = new Map(); // SKU -> { sku, desc, inventory }
+    for (const r of wm6InvRows){
+      const sku = r['Product'];
+      if (!sku && sku!==0) continue;
+      const qtyAvail = Number(r['Quantity Available']||0) || 0;
+      const desc = r['Product Description'] || '';
+      const cur = invBySku.get(sku) || { sku, desc, inventory:0 };
+      cur.inventory += qtyAvail;
+      // keep first non-empty description
+      if (!cur.desc && desc) cur.desc = desc;
+      invBySku.set(sku, cur);
+    }
+
+    // ---- Build Demand by SKU from Atlas ----
+    const statuses = new Set(selectedStatuses());
+    const from = parseDate(fromDate.value);
+    const to   = parseDate(toDate.value);
+    const destFilter = (dest.value||'').trim().toLowerCase();
+
+    const demandBySku = new Map(); // SKU -> demand
+    for (const r of atlasRows){
+      let ok = true;
+      // Date filter
+      const d = parseDate(r['Effective Release Date']);
+      if (from && d && d < from) ok = false;
+      if (to && d && d > new Date(to.getTime()+24*3600*1000-1)) ok = false; // inclusive
+      // Status filter
+      const st = (r['Status']||'').toString().trim().toUpperCase();
+      if (statuses.size && !statuses.has(st)) ok = false;
+      // Destination filter (text contains)
+      if (destFilter){
+        const destVal = (String(r['Destination #']||'') + ' ' + String(r['Purchase Company Code']||'')).toLowerCase();
+        if (!destVal.includes(destFilter)) ok = false;
+      }
+      if (!ok) continue;
+
+      const sku = r['Item #'];
+      if (!sku && sku!==0) continue;
+      const qty = Number(r['Order Quantity (WHPK)']||0) || 0;
+      demandBySku.set(sku, (demandBySku.get(sku)||0) + qty);
+    }
+
+    // ---- Merge keys from both sides ----
+    const allSkus = unique([ ...invBySku.keys(), ...demandBySku.keys() ]);
+    mergedRows = allSkus.map(sku => {
+      const inv = invBySku.get(sku);
+      const dem = demandBySku.get(sku) || 0;
+      const inventory = inv ? inv.inventory : 0;
+      const desc = inv ? inv.desc : '';
+      const net = inventory - dem;
+      return {
+        'SKU': sku,
+        'Item Description': desc,
+        'Inventory': inventory,
+        'Demand': dem,
+        'Net': net
+      };
+    });
+
+    // Search + render
+    render();
+  }
+
+  function render(){
+    // Search filter
+    const qv = q.value.trim().toLowerCase();
+    const view = mergedRows.filter(r =>
+      !qv ||
+      String(r['SKU']).toLowerCase().includes(qv) ||
+      String(r['Item Description']||'').toLowerCase().includes(qv)
+    );
+
+    // Header
+    const headers = ['SKU','Item Description','Inventory','Demand','Net'];
+    thead.innerHTML = '<tr>' + headers.map(h=>`<th>${h}</th>`).join('') + '</tr>';
+
+    // Body
+    const rowsHtml = view.map(r => {
+      const netClass = r.Net >= 0 ? 'good' : (r.Net < -5 ? 'bad' : 'warn'); // simple thresholds; we can tune
+      return `<tr>
+        <td>${r['SKU']}</td>
+        <td title="${(r['Item Description']||'').replace(/"/g,'&quot;')}">${r['Item Description']||''}</td>
+        <td class="num">${fmt(r['Inventory'])}</td>
+        <td class="num">${fmt(r['Demand'])}</td>
+        <td class="num ${netClass}">${fmt(r['Net'])}</td>
+      </tr>`;
+    }).join('');
+    tbody.innerHTML = rowsHtml;
+
+    rowCount.textContent = `${view.length.toLocaleString()} rows`;
+    colCount.textContent = `5 columns`;
+  }
+
+  function drawChart(){
+    const xKey = xColSel.value, yKey = yColSel.value;
+    if (!mergedRows.length) return;
+    // Aggregate by selected X
+    const map = new Map();
+    for (const r of mergedRows){
+      const x = String(r[xKey] ?? '(blank)');
+      map.set(x, (map.get(x)||0) + (Number(r[yKey])||0));
+    }
+    const labels = Array.from(map.keys()).slice(0,100); // cap to 100 to keep readable
+    const values = labels.map(l => map.get(l));
+
+    const ctx = document.getElementById('chart').getContext('2d');
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ label: `${yKey} by ${xKey}`, data: values, backgroundColor:'#60a5fa' }]},
+      options: { responsive:true, plugins:{ legend:{ display:true }}, scales:{ y:{ beginAtZero:true }} }
+    });
+    document.getElementById('chartWrap').classList.remove('hidden');
+  }
+
+  // ======= Events =======
+  btnChoose.addEventListener('click', ()=> input.click());
+  input.addEventListener('change', e => handleFiles(e.target.files));
+  ['dragenter','dragover'].forEach(evt => drop.addEventListener(evt, e=>{ e.preventDefault(); e.stopPropagation(); drop.classList.add('hover'); }));
+  ['dragleave','drop'].forEach(evt => drop.addEventListener(evt, e=>{ e.preventDefault(); e.stopPropagation(); drop.classList.remove('hover'); }));
+  drop.addEventListener('drop', e => { const files = e.dataTransfer.files; if (files && files.length) handleFiles(files); });
+  q.addEventListener('input', render);
+  btnApply.addEventListener('click', recompute);
+  btnChart.addEventListener('click', drawChart);
+  btnClear.addEventListener('click', ()=>{
+    atlasRows = []; wm6InvRows = []; ratesRows = []; mergedRows = []; filesSeen.clear();
+    thead.innerHTML=''; tbody.innerHTML=''; if(chart) chart.destroy();
+    toolbar.classList.add('hidden'); controls.classList.add('hidden'); gridWrap.classList.add('hidden'); document.getElementById('chartWrap').classList.add('hidden');
+    input.value=''; detected.textContent=''; q.value=''; fromDate.value=''; toDate.value=''; dest.value='';
+    // Reset defaults (NEW, RELEASED preselected)
+    for (const opt of statusSel.options){ opt.selected = (opt.value==='NEW'||opt.value==='RELEASED'); }
+  });
+
+})();
+</script>
 </body>
 </html>
