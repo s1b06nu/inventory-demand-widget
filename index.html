@@ -1,20 +1,35 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Inventory vs Demand</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-  :root {
-    --bg:#fff; --fg:#111; --muted:#667085;
-    --border:#e5e7eb; --good:#14866d; --warn:#b76e00; --bad:#a61c2a; --sticky:#f8fafc;
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial; color:var(--fg); background:var(--bg); }
+  <meta charset="utf-8" />
+  <title>Inventory vs Demand</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg:#fff; --fg:#111; --muted:#667085;
+      --border:#e5e7eb; --good:#14866d; --warn:#b76e00; --bad:#a61c2a; --sticky:#f8fafc;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial; color:var(--fg); background:var(--bg); }
 
-  .wrap { padding:12px; max-width:100vw; }
-  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
-  .toolbar input[type="search"]{ padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:280px; }
-  .toolbar .meta{ color:var(--muted); font-size:12px; }
+    .wrap { padding:12px; max-width:100vw; }
+    .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+    .toolbar input[type="search"]{ padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:280px; }
+    .toolbar .meta{ color:var(--muted); font-size:12px; }
 
-  .shell{ overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px; }
+    .shell{ overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="toolbar">
+      <input type="search" placeholder="Search…"/>
+      <span class="meta">Inventory vs Demand</span>
+    </div>
+    <div class="shell">
+      <!-- Your content goes here -->
+      <p>Hello, world.</p>
+    </div>
+  </div>
+</body>
+</html>
