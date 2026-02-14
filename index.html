@@ -69,7 +69,7 @@
     { key:'available_for_picking', label:'Avail for Picking', num:true },
   ];
   const baseCols = [
-    { key:'product', label:'Product', sticky:'left-2' },
+    { key:'product', label:'Product', sticky:'left' },
     { key:'description', label:'Description' },
   ];
   const releaseGroups = release_dates.map((d,i)=>({
@@ -112,7 +112,7 @@
       const th=document.createElement('th'); th.textContent=col.label; th.setAttribute('data-key',col.key);
       if(!col.render) th.setAttribute('data-sort','');
       if(col.sticky==='left'){ th.className='sticky-left'; th.style.left='0'; }
-      if(col.sticky==='left-2'){ th.className='sticky-left-2'; th.style.left='60px'; }
+      // no left-2 support now
       h.appendChild(th);
     });
     thead.appendChild(h);
