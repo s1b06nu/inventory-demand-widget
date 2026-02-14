@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Inventory vs Demand Widget</title>
+<title>Inventory vs Demand</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -10,45 +10,48 @@
     --border:#e5e7eb; --accent:#2563eb; --good:#14866d; --warn:#b76e00; --bad:#a61c2a;
     --sticky:#f8fafc;
   }
-  body { margin:0; font:14px/1.35 system-ui,Segoe UI,Roboto,Arial; color:var(--fg); background:var(--bg); }
-  .widget { padding:12px; }
-  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
-  .toolbar input[type="search"] { padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:260px; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:var(--fg); background:var(--bg); }
+  .wrap { padding:12px; max-width: 100vw; }
+  .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  .toolbar input[type="search"] { padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:280px; }
   .toolbar .meta { color:var(--muted); font-size:12px; }
+  .table-shell { overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px; }
   table { width:100%; border-collapse:separate; border-spacing:0; }
-  th, td { padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  th, td { padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:middle; background:#fff; }
   thead th { position:sticky; top:0; background:var(--sticky); z-index:2; font-weight:600; }
   thead tr.groups th { top:0; }
   thead tr.headers th { top:28px; }
-  th.group { text-align:center; border-bottom:1px solid var(--border); }
+  th.group { text-align:center; border-bottom:1px solid var(--border); white-space:nowrap; }
   th[data-sort] { cursor:pointer; }
   th[data-sort]::after { content:" ↕"; color:var(--muted); font-weight:400; }
   .num { text-align:right; font-variant-numeric: tabular-nums; }
-  .chip { font-size:12px; padding:2px 6px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
-  .pill { padding:2px 8px; border-radius:8px; color:#fff; }
+  .pill { padding:2px 8px; border-radius:8px; color:#fff; display:inline-block; min-width:3ch; text-align:right; }
   .pill.good { background:var(--good); } .pill.warn { background:var(--warn); } .pill.bad { background:var(--bad); }
-  .sticky-left { position:sticky; left:0; background:var(--bg); z-index:1; }
-  .sticky-left-2 { position:sticky; left:180px; background:var(--bg); z-index:1; }
+  .chip { font-size:12px; padding:2px 6px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .sticky-left { position:sticky; left:0; z-index:3; }
+  .sticky-left-2 { position:sticky; left:60px; z-index:2; }
   tbody tr:hover td { background:#f9fafb; }
   .pager { margin-top:8px; display:flex; gap:8px; align-items:center; justify-content:flex-end; }
   .btn { padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; }
   .btn[disabled] { opacity:.5; cursor:not-allowed; }
   @media (max-width: 1100px) {
     .sticky-left-2 { left:120px; }
-    .hide-mobile { display:none; }
   }
 </style>
 </head>
 <body>
-<div class="widget">
+<div class="wrap">
   <div class="toolbar">
     <input id="q" type="search" placeholder="Filter by product or description…" />
-    <label><input id="onlyShow" type="checkbox" /> Show only flagged</label>
+    <label><input id="onlyShow" type="checkbox"> Show only flagged</label>
     <span class="meta" id="meta"></span>
   </div>
-  <div style="overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px;">
+
+  <div class="table-shell">
     <table id="grid"></table>
   </div>
+
   <div class="pager">
     <button class="btn" id="prev">Prev</button>
     <span id="pageInfo" class="meta"></span>
@@ -58,44 +61,57 @@
 
 <script>
 (async function(){
-  // By default, we expect a file named widget_dataset.json in the same folder
-  const DATA_URL = 'widget_dataset.json';
+  // 👉 If you ever rename the JSON, change the line below
+  const DATA_URL = 'widget_dataset.json' + cacheBust();
 
-  const res = await fetch(DATA_URL);
-  const { generated_utc, release_dates, rows } = await res.json();
+  // --------- load data ----------
+  const res = await fetch(DATA_URL, {cache:'no-store'});
+  if (!res.ok) {
+    document.getElementById('grid').innerHTML =
+      '<thead><tr><th>Load error</th></tr></thead><tbody><tr><td>Could not fetch widget_dataset.json</td></tr></tbody>';
+    return;
+  }
+  const payload = await res.json();
+  const release_dates = payload.release_dates || [];
+  const rows = (payload.rows || []).map(r => ({...r, _show: r._show !== false}));
 
-  rows.forEach(r => r._show = (r._show !== false));
-
-  const columns = [
-    { key:'_show', label:'Show', width:60, render:(v,row)=>`<input type="checkbox" ${row._show?'checked':''} data-action="toggle" />`, sticky:'left' },
-    { key:'product', label:'Product', width:120, sticky:'left-2' },
-    { key:'description', label:'Description', width:260 },
-    { key:'total_inventory', label:'Total Inv', num:true },
-    { key:'quality_hold', label:'Quality Hold', num:true },
-    { key:'hold_24h', label:'24hr Hold', num:true },
-    { key:'available_inventory', label:'Available', num:true },
-    { key:'allocated_inventory', label:'Allocated', num:true },
-    { key:'reserved_inventory', label:'Reserved', num:true },
-    { key:'available_for_picking', label:'Avail for Picking', num:true },
+  // --------- columns ----------
+  const invCols = [
+    { key:'total_inventory',        label:'Total Inv',       num:true },
+    { key:'quality_hold',           label:'Quality Hold',    num:true },
+    { key:'hold_24h',               label:'24hr Hold',       num:true },
+    { key:'available_inventory',    label:'Available',       num:true },
+    { key:'allocated_inventory',    label:'Allocated',       num:true },
+    { key:'reserved_inventory',     label:'Reserved',        num:true },
+    { key:'available_for_picking',  label:'Avail for Picking', num:true }
   ];
 
-  const releaseGroups = release_dates.map((d,i)=>({
+  const baseCols = [
+    { key:'_show',     label:'Show',       sticky:'left',  render:(v,row)=>`<input type    { key:'product',   label:'Product',    sticky:'left-2' },
+    { key:'description', label:'Description' }
+  ];
+
+  const releaseGroups = release_dates.slice(0,3).map((d,i)=>({
     title: d,
     cols: [
-      { key:`release_${i+1}_pls`, label:'Picked/Loaded/Shipped', num:true },
-      { key:`release_${i+1}_remaining`, label:'Remaining Release', num:true },
-      { key:`release_${i+1}_remaining_inventory`, label:'Remaining Inventory', num:true,
+      { key:`release_${i+1}_pls`,                 label:'Picked/Loaded/Shipped', num:true },
+      { key:`release_${i+1}_remaining`,           label:'Remaining Release',     num:true },
+      { key:`release_${i+1}_remaining_inventory`, label:'Remaining Inventory',   num:true,
         render:(v)=> {
-          const cls = v >= 0 ? 'good' : (v>-10?'warn':'bad');
-          return `<span class="pill ${cls}">${fmtNum(v)}</span>`;
+          const cls = v >= 0 ? 'good' : (v > -10 ? 'warn' : 'bad');
+          return `<span class="pill ${cls}">${fmt(v)}</span>`;
         }
       },
-      { key:`release_${i+1}_hours_to_produce`, label:'Hours to Produce', num:true,
-        render:(v)=> v==null?'<span class="chip">n/a</span>':fmtNum(v,1)
+      { key:`release_${i+1}_hours_to_produce`,    label:'Hours to Produce',      num:true,
+        render:(v)=> v==null?'<span class="chip">n/a</span>':fmt(v,1)
       }
     ]
   }));
 
+  const columns = [...baseCols, ...invCols];
+  const allCols = [...columns, ...releaseGroups.flatMap(g=>g.cols)];
+
+  // --------- state ----------
   const table = document.getElementById('grid');
   const q = document.getElementById('q');
   const onlyShow = document.getElementById('onlyShow');
@@ -106,40 +122,52 @@
 
   let sortKey = 'product', sortDir = 1, page = 1, pageSize = 20;
 
-  function fmtNum(v, d=0){ return (v ?? 0).toLocaleString(undefined,{maximumFractionDigits:d}); }
+  function cacheBust(){ return `?v=${Date.now().toString().slice(-6)}`; }
+  function fmt(v, d=0){ return (v ?? 0).toLocaleString(undefined, {maximumFractionDigits:d}); }
 
+  // --------- header ----------
   function buildHeader(){
-    const groupRow = document.createElement('tr');
-    groupRow.className = 'groups';
-    const cellShow = document.createElement('th'); cellShow.className='group sticky-left'; cellShow.textContent=''; cellShow.style.left='0px'; cellShow.style.width='60px'; groupRow.appendChild(cellShow);
-    const cellProd = document.createElement('th'); cellProd.className='group sticky-left-2'; cellProd.textContent=''; cellProd.style.left='180px'; groupRow.appendChild(cellProd);
-    const inv = document.createElement('th'); inv.colSpan = (columns.length - 2); inv.className='group'; inv.textContent='WM6 Inventory'; groupRow.appendChild(inv);
-    releaseGroups.forEach(g=>{ const th = document.createElement('th'); th.colSpan = g.cols.length; th.className='group'; th.textContent = g.title; groupRow.appendChild(th); });
+    const thead = document.createElement('thead');
 
-    const headRow = document.createElement('tr'); headRow.className='headers';
-    [...columns, ...releaseGroups.flatMap(g=>g.cols)].forEach(col => {
-      const th = document.createElement('th');
-      th.textContent = col.label; th.setAttribute('data-key', col.key);
-      if (!col.render) th.setAttribute('data-sort','');
-      if (col.sticky==='left') { th.className='sticky-left'; th.style.left='0px'; }
-      if (col.sticky==='left-2') { th.className='sticky-left-2'; th.style.left='180px'; }
-      headRow.appendChild(th);
+    // Group row
+    const g = document.createElement('tr'); g.className='groups';
+    const th0 = document.createElement('th'); th0.className='group sticky-left'; th0.style.left='0'; th0.style.width='60px'; g.appendChild(th0);
+    const th1 = document.createElement('th'); th1.className='group sticky-left-2'; th1.style.left='60px'; g.appendChild(th1);
+    const th2 = document.createElement('th'); th2.className='group'; th2.textContent=''; g.appendChild(th2); // Description column
+    const thInv = document.createElement('th'); thInv.colSpan = invCols.length; thInv.className='group'; thInv.textContent='WM6 Inventory'; g.appendChild(thInv);
+    releaseGroups.forEach(grp => {
+      const th = document.createElement('th'); th.colSpan = grp.cols.length; th.className='group'; th.textContent = grp.title; g.appendChild(th);
     });
+    thead.appendChild(g);
 
-    const thead = document.createElement('thead'); thead.appendChild(groupRow); thead.appendChild(headRow); return thead;
+    // Header row
+    const h = document.createElement('tr'); h.className='headers';
+    allCols.forEach(col => {
+      const th = document.createElement('th');
+      th.textContent = col.label;
+      th.setAttribute('data-key', col.key);
+      if (!col.render) th.setAttribute('data-sort','');
+      if (col.sticky==='left')  { th.className='sticky-left';  th.style.left='0'; }
+      if (col.sticky==='left-2'){ th.className='sticky-left-2'; th.style.left='60px'; }
+      h.appendChild(th);
+    });
+    thead.appendChild(h);
+    return thead;
   }
 
+  // --------- body ----------
   function bodyRows(data){
     const tbody = document.createElement('tbody');
     data.forEach((row)=>{
       const tr = document.createElement('tr');
-      [...columns, ...releaseGroups.flatMap(g=>g.cols)].forEach((col)=>{
-        const td = document.createElement('td'); let v = row[col.key];
-        if (col.render) { td.innerHTML = col.render(v,row); }
-        else if (col.num) { td.className='num'; td.textContent = fmtNum(v); }
-        else { td.textContent = v ?? ''; }
-        if (col.sticky==='left') { td.className = (td.className?td.className+' ':'')+'sticky-left'; td.style.left='0px'; }
-        if (col.sticky==='left-2') { td.className = (td.className?td.className+' ':'')+'sticky-left-2'; td.style.left='180px'; }
+      allCols.forEach(col => {
+        const td = document.createElement('td');
+        const v = row[col.key];
+        if (col.render) td.innerHTML = col.render(v,row);
+        else if (col.num) { td.className='num'; td.textContent = fmt(v); }
+        else td.textContent = v ?? '';
+        if (col.sticky==='left')   { td.classList.add('sticky-left');  td.style.left='0'; }
+        if (col.sticky==='left-2') { td.classList.add('sticky-left-2'); td.style.left='60px'; }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -147,22 +175,24 @@
     return tbody;
   }
 
+  // --------- data helpers ----------
   function getData(){
     const term = q.value.trim().toLowerCase();
     let filtered = rows.filter(r=>{
       if (onlyShow.checked && !r._show) return false;
       if (!term) return true;
-      return (String(r.product).toLowerCase().includes(term) || (r.description||'').toLowerCase().includes(term));
+      return String(r.product).toLowerCase().includes(term) ||
+             String(r.description||'').toLowerCase().includes(term);
     });
     filtered.sort((a,b)=>{
-      const av = a[sortKey], bv = b[sortKey];
-      if (av==null && bv==null) return 0;
-      if (typeof av === 'number' && typeof bv === 'number') return (av-bv)*sortDir;
+      const av=a[sortKey], bv=b[sortKey];
+      if (typeof av==='number' && typeof bv==='number') return (av-bv)*sortDir;
       return String(av??'').localeCompare(String(bv??''))*sortDir;
     });
     return filtered;
   }
 
+  // --------- render ----------
   function render(){
     table.innerHTML = '';
     table.appendChild(buildHeader());
@@ -170,32 +200,7 @@
     const data = getData();
     const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
     page = Math.min(page, totalPages);
-    const start = (page-1)*pageSize; const slice = data.slice(start, start+pageSize);
-
+    const start = (page-1)*pageSize, slice = data.slice(start, start+pageSize);
     table.appendChild(bodyRows(slice));
 
-    meta.textContent = `Updated ${new Date(generated_utc).toLocaleString()} • ${rows.length} items`;
-    pageInfo.textContent = `Page ${page} / ${totalPages}`;
-    prev.disabled = page<=1; next.disabled = page>=totalPages;
-  }
-
-  table.addEventListener('click', e=>{
-    const th = e.target.closest('th[data-sort]');
-    if (th){ const key = th.dataset.key; if (key){ sortKey = key; sortDir = -sortDir; render(); } }
-    const cb = e.target.closest('input[data-action="toggle"]');
-    if (cb){ const tr = cb.closest('tr'); const idx = Array.from(tr.parentNode.children).indexOf(tr);
-      // recompute data index accounting for current page
-      // (not strictly needed for demo; state survives filter/sort)
-    }
-  });
-
-  q.addEventListener('input', ()=>{ page=1; render(); });
-  onlyShow.addEventListener('change', ()=>{ page=1; render(); });
-  prev.addEventListener('click', ()=>{ page=Math.max(1,page-1); render(); });
-  next.addEventListener('click', ()=>{ page=page+1; render(); });
-
-  render();
-})();
-</script>
-</body>
-</html>
+    meta.textContent = `Updated ${new Date(payload.generated_utc || Date.now()).toLocaleString()} • ${rows.length} items`;
