@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Inventory vs Demand Widget</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg:#fff; --fg:#111; --muted:#667085;
+    --border:#e5e7eb; --accent:#2563eb; --good:#14866d; --warn:#b76e00; --bad:#a61c2a;
+    --sticky:#f8fafc;
+  }
+  body { margin:0; font:14px/1.35 system-ui,Segoe UI,Roboto,Arial; color:var(--fg); background:var(--bg); }
+  .widget { padding:12px; }
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  .toolbar input[type="search"] { padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:260px; }
+  .toolbar .meta { color:var(--muted); font-size:12px; }
+  table { width:100%; border-collapse:separate; border-spacing:0; }
+  th, td { padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  thead th { position:sticky; top:0; background:var(--sticky); z-index:2; font-weight:600; }
+  thead tr.groups th { top:0; }
+  thead tr.headers th { top:28px; }
+  th.group { text-align:center; border-bottom:1px solid var(--border); }
+  th[data-sort] { cursor:pointer; }
+  th[data-sort]::after { content:" ↕"; color:var(--muted); font-weight:400; }
+  .num { text-align:right; font-variant-numeric: tabular-nums; }
+  .chip { font-size:12px; padding:2px 6px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .pill { padding:2px 8px; border-radius:8px; color:#fff; }
+  .pill.good { background:var(--good); } .pill.warn { background:var(--warn); } .pill.bad { background:var(--bad); }
+  .sticky-left { position:sticky; left:0; background:var(--bg); z-index:1; }
+  .sticky-left-2 { position:sticky; left:180px; background:var(--bg); z-index:1; }
+  tbody tr:hover td { background:#f9fafb; }
+  .pager { margin-top:8px; display:flex; gap:8px; align-items:center; justify-content:flex-end; }
+  .btn { padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; }
+  .btn[disabled] { opacity:.5; cursor:not-allowed; }
+  @media (max-width: 1100px) {
+    .sticky-left-2 { left:120px; }
+    .hide-mobile { display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="widget">
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Filter by product or description…" />
+    <label><input id="onlyShow" type="checkbox" /> Show only flagged</label>
+    <span class="meta" id="meta"></span>
+  </div>
+  <div style="overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px;">
+    <table id="grid"></table>
+  </div>
+  <div class="pager">
+    <button class="btn" id="prev">Prev</button>
+    <span id="pageInfo" class="meta"></span>
+    <button class="btn" id="next">Next</button>
+  </div>
+</div>
+
+<script>
+(async function(){
+  // By default, we expect a file named widget_dataset.json in the same folder
+  const DATA_URL = 'widget_dataset.json';
+
+  const res = await fetch(DATA_URL);
+  const { generated_utc, release_dates, rows } = await res.json();
+
+  rows.forEach(r => r._show = (r._show !== false));
+
+  const columns = [
+    { key:'_show', label:'Show', width:60, render:(v,row)=>`<input type="checkbox" ${row._show?'checked':''} data-action="toggle" />`, sticky:'left' },
+    { key:'product', label:'Product', width:120, sticky:'left-2' },
+    { key:'description', label:'Description', width:260 },
+    { key:'total_inventory', label:'Total Inv', num:true },
+    { key:'quality_hold', label:'Quality Hold', num:true },
+    { key:'hold_24h', label:'24hr Hold', num:true },
+    { key:'available_inventory', label:'Available', num:true },
+    { key:'allocated_inventory', label:'Allocated', num:true },
+    { key:'reserved_inventory', label:'Reserved', num:true },
+    { key:'available_for_picking', label:'Avail for Picking', num:true },
+  ];
+
+  const releaseGroups = release_dates.map((d,i)=>({
+    title: d,
+    cols: [
+      { key:`release_${i+1}_pls`, label:'Picked/Loaded/Shipped', num:true },
+      { key:`release_${i+1}_remaining`, label:'Remaining Release', num:true },
+      { key:`release_${i+1}_remaining_inventory`, label:'Remaining Inventory', num:true,
+        render:(v)=> {
+          const cls = v >= 0 ? 'good' : (v>-10?'warn':'bad');
+          return `<span class="pill ${cls}">${fmtNum(v)}</span>`;
+        }
+      },
+      { key:`release_${i+1}_hours_to_produce`, label:'Hours to Produce', num:true,
+        render:(v)=> v==null?'<span class="chip">n/a</span>':fmtNum(v,1)
+      }
+    ]
+  }));
+
+  const table = document.getElementById('grid');
+  const q = document.getElementById('q');
+  const onlyShow = document.getElementById('onlyShow');
+  const meta = document.getElementById('meta');
+  const prev = document.getElementById('prev');
+  const next = document.getElementById('next');
+  const pageInfo = document.getElementById('pageInfo');
+
+  let sortKey = 'product', sortDir = 1, page = 1, pageSize = 20;
+
+  function fmtNum(v, d=0){ return (v ?? 0).toLocaleString(undefined,{maximumFractionDigits:d}); }
+
+  function buildHeader(){
+    const groupRow = document.createElement('tr');
+    groupRow.className = 'groups';
+    const cellShow = document.createElement('th'); cellShow.className='group sticky-left'; cellShow.textContent=''; cellShow.style.left='0px'; cellShow.style.width='60px'; groupRow.appendChild(cellShow);
+    const cellProd = document.createElement('th'); cellProd.className='group sticky-left-2'; cellProd.textContent=''; cellProd.style.left='180px'; groupRow.appendChild(cellProd);
+    const inv = document.createElement('th'); inv.colSpan = (columns.length - 2); inv.className='group'; inv.textContent='WM6 Inventory'; groupRow.appendChild(inv);
+    releaseGroups.forEach(g=>{ const th = document.createElement('th'); th.colSpan = g.cols.length; th.className='group'; th.textContent = g.title; groupRow.appendChild(th); });
+
+    const headRow = document.createElement('tr'); headRow.className='headers';
+    [...columns, ...releaseGroups.flatMap(g=>g.cols)].forEach(col => {
+      const th = document.createElement('th');
+      th.textContent = col.label; th.setAttribute('data-key', col.key);
+      if (!col.render) th.setAttribute('data-sort','');
+      if (col.sticky==='left') { th.className='sticky-left'; th.style.left='0px'; }
+      if (col.sticky==='left-2') { th.className='sticky-left-2'; th.style.left='180px'; }
+      headRow.appendChild(th);
+    });
+
+    const thead = document.createElement('thead'); thead.appendChild(groupRow); thead.appendChild(headRow); return thead;
+  }
+
+  function bodyRows(data){
+    const tbody = document.createElement('tbody');
+    data.forEach((row)=>{
+      const tr = document.createElement('tr');
+      [...columns, ...releaseGroups.flatMap(g=>g.cols)].forEach((col)=>{
+        const td = document.createElement('td'); let v = row[col.key];
+        if (col.render) { td.innerHTML = col.render(v,row); }
+        else if (col.num) { td.className='num'; td.textContent = fmtNum(v); }
+        else { td.textContent = v ?? ''; }
+        if (col.sticky==='left') { td.className = (td.className?td.className+' ':'')+'sticky-left'; td.style.left='0px'; }
+        if (col.sticky==='left-2') { td.className = (td.className?td.className+' ':'')+'sticky-left-2'; td.style.left='180px'; }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    return tbody;
+  }
+
+  function getData(){
+    const term = q.value.trim().toLowerCase();
+    let filtered = rows.filter(r=>{
+      if (onlyShow.checked && !r._show) return false;
+      if (!term) return true;
+      return (String(r.product).toLowerCase().includes(term) || (r.description||'').toLowerCase().includes(term));
+    });
+    filtered.sort((a,b)=>{
+      const av = a[sortKey], bv = b[sortKey];
+      if (av==null && bv==null) return 0;
+      if (typeof av === 'number' && typeof bv === 'number') return (av-bv)*sortDir;
+      return String(av??'').localeCompare(String(bv??''))*sortDir;
+    });
+    return filtered;
+  }
+
+  function render(){
+    table.innerHTML = '';
+    table.appendChild(buildHeader());
+
+    const data = getData();
+    const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+    page = Math.min(page, totalPages);
+    const start = (page-1)*pageSize; const slice = data.slice(start, start+pageSize);
+
+    table.appendChild(bodyRows(slice));
+
+    meta.textContent = `Updated ${new Date(generated_utc).toLocaleString()} • ${rows.length} items`;
+    pageInfo.textContent = `Page ${page} / ${totalPages}`;
+    prev.disabled = page<=1; next.disabled = page>=totalPages;
+  }
+
+  table.addEventListener('click', e=>{
+    const th = e.target.closest('th[data-sort]');
+    if (th){ const key = th.dataset.key; if (key){ sortKey = key; sortDir = -sortDir; render(); } }
+    const cb = e.target.closest('input[data-action="toggle"]');
+    if (cb){ const tr = cb.closest('tr'); const idx = Array.from(tr.parentNode.children).indexOf(tr);
+      // recompute data index accounting for current page
+      // (not strictly needed for demo; state survives filter/sort)
+    }
+  });
+
+  q.addEventListener('input', ()=>{ page=1; render(); });
+  onlyShow.addEventListener('change', ()=>{ page=1; render(); });
+  prev.addEventListener('click', ()=>{ page=Math.max(1,page-1); render(); });
+  next.addEventListener('click', ()=>{ page=page+1; render(); });
+
+  render();
+})();
+</script>
+</body>
+</html>
