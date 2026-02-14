@@ -1,13 +1,13 @@
 name: Build dataset from exports
 
 on:
-  workflow_dispatch: {}         # lets you run it by hand if you want
+  workflow_dispatch: {}         # allows manual runs from Actions tab
   push:
     paths:
-      - 'exports/**'            # runs automatically whenever exports/ changes
+      - 'exports/**'            # auto-run whenever files in exports/ change
 
 permissions:
-  contents: write               # needed so the Action can commit the new JSON
+  contents: write               # let the Action commit the new JSON
 
 jobs:
   build:
