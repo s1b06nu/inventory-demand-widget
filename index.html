@@ -101,7 +101,6 @@
   function header(){
     const thead=document.createElement('thead');
     const g=document.createElement('tr'); g.className='groups';
-    const th0=document.createElement('th'); th0.className='group sticky-left';  th0.style.left='0';  th0.style.width='60px'; g.appendChild(th0);
     const th1=document.createElement('th'); th1.className='group sticky-left-2'; th1.style.left='60px'; g.appendChild(th1);
     const th2=document.createElement('th'); th2.className='group'; th2.textContent=''; g.appendChild(th2);
     const thInv=document.createElement('th'); thInv.colSpan=invCols.length; thInv.className='group'; thInv.textContent='WM6 Inventory'; g.appendChild(thInv);
